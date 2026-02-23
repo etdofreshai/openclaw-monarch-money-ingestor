@@ -1,58 +1,69 @@
 # REQUEST.md — openclaw-monarch-money-ingestor
 
 ## Goal
-Ingest transaction exports from Monarch Money into the OpenClaw PostgreSQL messages/transactions database for AI-assisted financial analysis.
+Automatically ingest Monarch Money transaction history into the OpenClaw PostgreSQL database on a schedule, using the unofficial Monarch Money GraphQL API.
 
-## Background
-ET exports transaction CSVs from Monarch Money. These need to be parsed and stored in a structured way so the OpenClaw agent can query spending history, identify subscriptions, answer questions like "what did I spend on food last month?", and support future budgeting features.
-
-## Input Format
-Monarch Money CSV export with columns:
-- `Date` — YYYY-MM-DD
-- `Merchant` — display name
-- `Category` — Monarch's category label
-- `Account` — e.g. "Apple Card", "Savings", "TOTAL CHECKING (...4000)"
-- `Original Statement` — raw bank string
-- `Notes` — user notes
-- `Amount` — positive = income, negative = expense
-- `Tags` — comma-separated
-- `Owner` — e.g. "Shared"
-- `Business Entity` — optional
+## References
+- JS library: https://github.com/pbassham/monarch-money-api (`npm i monarch-money-api`)
+- Python library (for API hints): https://github.com/hammem/monarchmoney
+- Endpoint: `https://api.monarchmoney.com/graphql`
 
 ## Stack
-- TypeScript (ET's preference)
-- Node.js CLI — run as `npx ts-node ingest.ts <file.csv>`
-- PostgreSQL (existing OpenClaw DB)
-- Connection: read from env var `DATABASE_URL`
+- TypeScript + Node.js
+- `monarch-money-api` npm package (handles auth + GraphQL)
+- PostgreSQL (`DATABASE_URL` env var)
+- Runs as a scheduled cron (daily or hourly)
+
+## Auth
+One-time interactive login via CLI:
+```bash
+npx ts-node login.ts
+```
+Saves session token to `.env` as `MONARCH_TOKEN`. Subsequent runs are fully automatic using the saved token.
 
 ## Database Target
-Create a `transactions` table if it doesn't exist:
+Upsert into a `transactions` table:
 ```sql
 CREATE TABLE IF NOT EXISTS transactions (
   id SERIAL PRIMARY KEY,
+  monarch_id TEXT UNIQUE,           -- Monarch's transaction ID (dedup key)
   date DATE NOT NULL,
   merchant TEXT,
   category TEXT,
   account TEXT,
-  original_statement TEXT,
+  amount NUMERIC(10,2) NOT NULL,    -- positive = income, negative = expense
   notes TEXT,
-  amount NUMERIC(10,2) NOT NULL,
   tags TEXT[],
-  owner TEXT,
-  business_entity TEXT,
+  is_recurring BOOLEAN,
   source TEXT DEFAULT 'monarch',
-  imported_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(date, original_statement, amount)
+  raw JSONB,                        -- full Monarch response
+  imported_at TIMESTAMPTZ DEFAULT NOW()
 );
 ```
 
 ## Behavior
-- Parse CSV, skip header
-- Upsert rows (skip duplicates via UNIQUE constraint)
-- Print summary: X rows inserted, Y skipped (duplicates)
-- Support `--dry-run` flag to preview without writing
+- On first run: fetch ALL transactions (paginate from the beginning)
+- On subsequent runs: fetch only since last imported date (stored in a `sync_state` table or a watermark file)
+- Upsert by `monarch_id` — safe to re-run
+- Print summary: X new, Y updated, Z skipped
+- `--full` flag to force a complete re-sync
+
+## Key API Method
+```ts
+import { getTransactions } from 'monarch-money-api';
+
+const txns = await getTransactions({
+  limit: 100,
+  offset: 0,
+  startDate: '2024-01-01',
+  endDate: '2026-12-31',
+});
+```
+
+## Scheduling
+Intended to run as a cron job inside OpenClaw/Dokploy — daily pull of new transactions. No manual intervention after initial auth.
 
 ## Out of Scope (v1)
+- No budgets, accounts, or net worth data (transactions only)
+- No category normalization
 - No web UI
-- No automatic export/scraping — manual CSV drop only
-- No category normalization (keep Monarch's categories as-is)
