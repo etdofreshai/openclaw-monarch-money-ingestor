@@ -1,0 +1,41 @@
+{
+  "name": "openclaw-monarch-money-ingestor",
+  "version": "1.0.0",
+  "description": "Ingest Monarch Money transactions into OpenClaw PostgreSQL database",
+  "main": "dist/cli.js",
+  "scripts": {
+    "build": "NODE_ENV=development tsc",
+    "start": "node dist/cli.js",
+    "sync": "node dist/cli.js sync",
+    "sync:full": "node dist/cli.js sync --full",
+    "login": "node dist/cli.js login",
+    "server": "node dist/cli.js server",
+    "dev": "ts-node src/cli.ts",
+    "dev:sync": "ts-node src/cli.ts sync",
+    "dev:login": "ts-node src/cli.ts login",
+    "dev:server": "ts-node src/cli.ts server"
+  },
+  "keywords": [
+    "monarch",
+    "money",
+    "openclaw",
+    "ingestor",
+    "transactions"
+  ],
+  "author": "OpenClaw",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^12.0.0",
+    "dotenv": "^16.4.1",
+    "express": "^4.18.2",
+    "monarch-money-ts": "^0.0.7",
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.25",
+    "@types/node": "^20.19.35",
+    "@types/pg": "^8.16.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
