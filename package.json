@@ -4,6 +4,7 @@
   "description": "Ingest Monarch Money transactions into OpenClaw PostgreSQL database",
   "main": "dist/cli.js",
   "scripts": {
+    "postinstall": "node scripts/patch-monarch-money-ts.js",
     "build": "NODE_ENV=development tsc",
     "start": "node dist/cli.js",
     "sync": "node dist/cli.js sync",

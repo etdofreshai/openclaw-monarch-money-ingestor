@@ -6,6 +6,17 @@ import { createMonarchClient } from './monarch-client.js';
 import { initDb, closeDb } from './db.js';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as readline from 'readline';
+
+function promptUser(question: string): Promise<string> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
 
 const program = new Command();
 
@@ -41,6 +52,7 @@ program
   .description('Login to Monarch Money and save token')
   .option('--email <email>', 'Monarch Money email')
   .option('--password <password>', 'Monarch Money password')
+  .option('--mfa-code <code>', 'MFA/TOTP code from authenticator app')
   .option('--output <file>', 'Output file for token', '.env')
   .action(async (options) => {
     try {
@@ -52,17 +64,28 @@ program
         console.log('');
         console.log('Usage:');
         console.log('  npm run dev:login -- --email your@email.com --password yourpassword');
+        console.log('  npm run dev:login -- --email your@email.com --password yourpassword --mfa-code 123456');
         console.log('');
-        console.log('Or set credentials as env vars:');
-        console.log('  MONARCH_EMAIL=your@email.com MONARCH_PASSWORD=yourpassword npm run dev:login');
-        console.log('');
+        console.log('If MFA is enabled, you will be prompted for a code from your authenticator app.');
         console.log('After login, your token will be saved to .env file.');
         process.exit(1);
       }
 
       console.log('Logging in to Monarch Money...');
       const client = createMonarchClient();
-      const { token } = await client.login(options.email, options.password);
+
+      let token: string;
+      try {
+        ({ token } = await client.login(options.email, options.password, options.mfaCode));
+      } catch (error) {
+        if (error instanceof Error && error.message === 'MFA_REQUIRED') {
+          console.log('MFA is required for this account.');
+          const mfaCode = options.mfaCode || await promptUser('Enter your 6-digit MFA code: ');
+          ({ token } = await client.login(options.email, options.password, mfaCode));
+        } else {
+          throw error;
+        }
+      }
 
       // Read existing .env if it exists
       const envPath = path.resolve(options.output);
