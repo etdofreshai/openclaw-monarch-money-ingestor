@@ -3,7 +3,6 @@ import { Command } from 'commander';
 import { runSync } from './sync.js';
 import { startServer } from './server.js';
 import { createMonarchClient } from './monarch-client.js';
-import { initDb, closeDb } from './db.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
@@ -37,11 +36,9 @@ program
         full: options.full,
         token: options.token,
       });
-      await closeDb();
       process.exit(0);
     } catch (error) {
       console.error('Sync failed:', error instanceof Error ? error.message : error);
-      await closeDb();
       process.exit(1);
     }
   });
@@ -117,7 +114,6 @@ program
   .action(async (options) => {
     try {
       const port = parseInt(options.port, 10);
-      await initDb();
       startServer(port);
     } catch (error) {
       console.error('Server failed to start:', error instanceof Error ? error.message : error);
@@ -131,7 +127,6 @@ program
   .description('Show current sync status')
   .action(async () => {
     try {
-      await initDb();
       const { getStatus } = await import('./sync.js');
       const status = await getStatus(false);
 
@@ -150,8 +145,6 @@ program
     } catch (error) {
       console.error('Failed to get status:', error instanceof Error ? error.message : error);
       process.exit(1);
-    } finally {
-      await closeDb();
     }
   });
 

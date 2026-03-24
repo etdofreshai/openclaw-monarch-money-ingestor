@@ -26,34 +26,6 @@ export interface MonarchTransaction {
   createdAt?: string;
 }
 
-// Our database transaction type
-export interface DbTransaction {
-  id?: number;
-  monarch_id: string;
-  date: Date;
-  merchant: string | null;
-  category: string | null;
-  account: string | null;
-  amount: number;
-  notes: string | null;
-  tags: string[];
-  is_recurring: boolean;
-  source: string;
-  raw: object;
-  imported_at?: Date;
-}
-
-// Sync state tracking
-export interface SyncState {
-  id?: number;
-  key: string;
-  last_sync_date: Date | null;
-  last_transaction_date: Date | null;
-  total_transactions: number;
-  last_run_at: Date | null;
-  error_message: string | null;
-}
-
 // Status endpoint response
 export interface StatusResponse {
   service: string;

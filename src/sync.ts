@@ -1,15 +1,6 @@
-import {
-  initDb,
-  upsertTransactions,
-  getSyncState,
-  updateSyncState,
-  getTransactionCount,
-  getRecentTransactionCount,
-  getAccountCount,
-  closeDb,
-} from './db.js';
+import { createApiClient, type ApiTransaction } from './api-client.js';
 import { createMonarchClient } from './monarch-client.js';
-import type { MonarchTransaction, DbTransaction, SyncResult, StatusResponse } from './types.js';
+import type { MonarchTransaction, SyncResult, StatusResponse } from './types.js';
 
 export interface SyncOptions {
   full?: boolean;
@@ -17,11 +8,12 @@ export interface SyncOptions {
   onProgress?: (message: string) => void;
 }
 
-// Convert Monarch transaction to database format
-function toDbTransaction(txn: MonarchTransaction): DbTransaction {
+// Convert Monarch transaction to API format
+function toApiTransaction(txn: MonarchTransaction): ApiTransaction {
   return {
-    monarch_id: txn.id,
-    date: new Date(txn.date),
+    external_id: txn.id,
+    source: 'monarch',
+    date: new Date(txn.date).toISOString().split('T')[0],
     merchant: txn.merchant || txn.merchantName || null,
     category: txn.category?.name || txn.categoryName || null,
     account: txn.account?.name || txn.accountName || null,
@@ -31,15 +23,13 @@ function toDbTransaction(txn: MonarchTransaction): DbTransaction {
       ? txn.tags.map((t) => (typeof t === 'string' ? t : t.name || ''))
       : [],
     is_recurring: txn.isRecurring || false,
-    source: 'monarch',
-    raw: txn,
+    metadata: txn,
   };
 }
 
 // Get the latest transaction date from a list
 function getLatestDate(txns: MonarchTransaction[]): Date | null {
   if (txns.length === 0) return null;
-
   return txns.reduce((latest, txn) => {
     const txnDate = new Date(txn.date);
     return txnDate > latest ? txnDate : latest;
@@ -58,18 +48,17 @@ export async function runSync(options: SyncOptions = {}): Promise<SyncResult> {
 
   log(`Starting ${full ? 'full' : 'incremental'} sync...`);
 
-  // Initialize database
-  await initDb();
+  // Initialize API client
+  const apiClient = createApiClient();
 
   // Get current sync state
-  const syncState = await getSyncState();
-  const lastTransactionDate = syncState?.last_transaction_date;
+  const syncState = await apiClient.getSyncState('monarch');
+  const lastRecordDate = syncState?.last_record_date;
 
   // Determine date range for fetch
   let startDate: string | undefined;
-  if (!full && lastTransactionDate) {
-    // Fetch from last transaction date - 7 days (to catch updates)
-    const bufferDate = new Date(lastTransactionDate);
+  if (!full && lastRecordDate) {
+    const bufferDate = new Date(lastRecordDate);
     bufferDate.setDate(bufferDate.getDate() - 7);
     startDate = bufferDate.toISOString().split('T')[0];
     log(`Incremental sync from ${startDate}`);
@@ -85,7 +74,6 @@ export async function runSync(options: SyncOptions = {}): Promise<SyncResult> {
 
   const client = createMonarchClient(monarchToken);
 
-  // Test connection
   const isConnected = await client.testConnection();
   if (!isConnected) {
     throw new Error('Failed to connect to Monarch Money API. Token may be expired.');
@@ -94,11 +82,9 @@ export async function runSync(options: SyncOptions = {}): Promise<SyncResult> {
 
   // Fetch transactions
   const startTime = Date.now();
-  let fetchCount = 0;
   const transactions = await client.getAllTransactions({
     startDate,
     onProgress: (count) => {
-      fetchCount = count;
       if (count % 500 === 0) {
         log(`Fetched ${count} transactions...`);
       }
@@ -107,30 +93,43 @@ export async function runSync(options: SyncOptions = {}): Promise<SyncResult> {
 
   log(`Fetched ${transactions.length} transactions in ${Date.now() - startTime}ms`);
 
-  // Convert to database format
-  const dbTransactions = transactions.map(toDbTransaction);
-
-  // Upsert transactions
+  // Convert and batch upsert
+  const apiTransactions = transactions.map(toApiTransaction);
   log('Upserting transactions...');
-  const upsertResult = await upsertTransactions(dbTransactions);
+
+  const BATCH_SIZE = 200;
+  let totalNew = 0, totalUpdated = 0, totalSkipped = 0;
+
+  for (let i = 0; i < apiTransactions.length; i += BATCH_SIZE) {
+    const chunk = apiTransactions.slice(i, i + BATCH_SIZE);
+    const result = await apiClient.batchUpsertTransactions(chunk);
+    totalNew += result.results.new;
+    totalUpdated += result.results.updated;
+    totalSkipped += result.results.skipped;
+
+    if (apiTransactions.length > BATCH_SIZE) {
+      log(`Batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(apiTransactions.length / BATCH_SIZE)}: +${result.results.new} ~${result.results.updated} =${result.results.skipped}`);
+    }
+  }
 
   // Update sync state
   const latestDate = getLatestDate(transactions);
-  const totalCount = await getTransactionCount();
+  const stats = await apiClient.getTransactionStats();
 
-  await updateSyncState({
-    last_sync_date: new Date(),
-    last_transaction_date: latestDate || undefined,
-    total_transactions: totalCount,
-    last_run_at: new Date(),
+  await apiClient.updateSyncState('monarch', {
+    source: 'monarch',
+    last_sync_date: new Date().toISOString(),
+    last_record_date: latestDate?.toISOString().split('T')[0] || null,
+    total_records: stats.total,
+    last_run_at: new Date().toISOString(),
     error_message: null,
   });
 
   const completed_at = new Date();
   const result: SyncResult = {
-    new: upsertResult.new,
-    updated: upsertResult.updated,
-    skipped: upsertResult.skipped,
+    new: totalNew,
+    updated: totalUpdated,
+    skipped: totalSkipped,
     errors: 0,
     total_fetched: transactions.length,
     sync_type: full ? 'full' : 'incremental',
@@ -151,24 +150,21 @@ export async function runSync(options: SyncOptions = {}): Promise<SyncResult> {
   return result;
 }
 
-// Cache timestamp for tracking
+// Cache
+let statusCache: StatusResponse | null = null;
 let cacheTimestamp: Date | null = null;
 
 // Get status for API endpoint
 export async function getStatus(useCache: boolean = false): Promise<StatusResponse> {
-  // Check if we have a cached status (simple in-memory cache)
   if (useCache && statusCache && cacheTimestamp && Date.now() - cacheTimestamp.getTime() < 5 * 60 * 1000) {
     return statusCache;
   }
 
-  await initDb();
+  const apiClient = createApiClient();
+  const syncState = await apiClient.getSyncState('monarch');
+  const stats = await apiClient.getTransactionStats();
 
-  const syncState = await getSyncState();
-  const transactionsTotal = await getTransactionCount();
-  const transactionsLast30Days = await getRecentTransactionCount(30);
-  const accountsCount = await getAccountCount();
-
-  // Test API connectivity
+  // Test Monarch API connectivity
   let apiReachable = false;
   const token = process.env.MONARCH_TOKEN;
   if (token) {
@@ -183,11 +179,11 @@ export async function getStatus(useCache: boolean = false): Promise<StatusRespon
   const status: StatusResponse = {
     service: 'monarch-money',
     status: syncState?.error_message ? 'error' : 'ok',
-    last_sync: syncState?.last_sync_date?.toISOString() || null,
-    accounts_count: accountsCount,
-    transactions_total: transactionsTotal,
-    transactions_last_30_days: transactionsLast30Days,
-    net_worth: null, // Would require additional API call
+    last_sync: syncState?.last_sync_date || null,
+    accounts_count: stats.distinct_accounts,
+    transactions_total: stats.total,
+    transactions_last_30_days: stats.recent_30d,
+    net_worth: null,
     last_balance_update: null,
     api_reachable: apiReachable,
     cached_at: new Date().toISOString(),
@@ -200,10 +196,6 @@ export async function getStatus(useCache: boolean = false): Promise<StatusRespon
   return status;
 }
 
-// Simple in-memory cache
-let statusCache: StatusResponse | null = null;
-
-// Clear cache
 export function clearStatusCache(): void {
   statusCache = null;
   cacheTimestamp = null;
