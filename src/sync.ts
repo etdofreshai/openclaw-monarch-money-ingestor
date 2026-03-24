@@ -16,13 +16,12 @@ function toApiTransaction(txn: MonarchTransaction): ApiTransaction {
     date: new Date(txn.date).toISOString().split('T')[0],
     merchant: txn.merchant || txn.merchantName || null,
     category: txn.category?.name || txn.categoryName || null,
-    account: txn.account?.name || txn.accountName || null,
+    account_name: txn.account?.name || txn.accountName || null,
     amount: txn.amount,
     notes: txn.notes || null,
     tags: Array.isArray(txn.tags)
       ? txn.tags.map((t) => (typeof t === 'string' ? t : t.name || ''))
       : [],
-    is_recurring: txn.isRecurring || false,
     metadata: txn,
   };
 }

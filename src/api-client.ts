@@ -6,11 +6,10 @@ export interface ApiTransaction {
   date: string;
   merchant: string | null;
   category: string | null;
-  account: string | null;
+  account_name: string | null;
   amount: number;
   notes: string | null;
   tags: string[];
-  is_recurring: boolean;
   metadata: object;
 }
 
@@ -98,7 +97,7 @@ export class MemoryDatabaseApiClient {
   }
 
   async getTransactionStats(): Promise<TransactionStats> {
-    return this.request('/api/transactions/stats');
+    return this.request('/api/transactions/summary');
   }
 }
 
