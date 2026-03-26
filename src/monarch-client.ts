@@ -303,9 +303,8 @@ export class MonarchClient {
   };
 
   private getDefaultStartDate(): string {
-    const date = new Date();
-    date.setFullYear(date.getFullYear() - 2);
-    return date.toISOString().split('T')[0];
+    // Fetch all historical data (Monarch accounts may have data back to 2008+)
+    return '2000-01-01';
   }
 
   private getDefaultEndDate(): string {

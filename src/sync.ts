@@ -122,6 +122,7 @@ export async function runSync(options: SyncOptions = {}): Promise<SyncResult> {
     total_records: stats.total,
     last_run_at: new Date().toISOString(),
     error_message: null,
+    metadata: {},
   });
 
   const completed_at = new Date();
