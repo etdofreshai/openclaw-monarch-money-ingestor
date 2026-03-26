@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import cron from 'node-cron';
 import { getStatus, clearStatusCache } from './sync.js';
 
 export function createServer(): express.Application {
@@ -115,6 +116,33 @@ export function startServer(port: number = 3001): void {
       }, syncIntervalMs);
     } else {
       console.log('  Auto-sync: disabled (SYNC_INTERVAL_MS=0)');
+    }
+
+    // Nightly full sync cron
+    const nightlySyncEnabled = (process.env.NIGHTLY_SYNC_ENABLED || 'true').toLowerCase() === 'true';
+    const nightlySyncCron = process.env.NIGHTLY_SYNC_CRON || '0 9 * * *';
+
+    if (nightlySyncEnabled) {
+      if (!cron.validate(nightlySyncCron)) {
+        console.error(`[nightly-sync] Invalid cron expression: ${nightlySyncCron}`);
+      } else {
+        cron.schedule(nightlySyncCron, async () => {
+          console.log('[nightly-sync] Starting nightly full sync...');
+          const start = Date.now();
+          try {
+            const { runSync } = await import('./sync.js');
+            await runSync({ full: true });
+            const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+            console.log(`[nightly-sync] Nightly full sync complete in ${elapsed}s.`);
+          } catch (error) {
+            const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+            console.error(`[nightly-sync] Nightly full sync failed after ${elapsed}s:`, error);
+          }
+        }, { timezone: 'UTC' });
+        console.log(`  Nightly sync: ${nightlySyncCron} (UTC)`);
+      }
+    } else {
+      console.log('  Nightly sync: disabled (NIGHTLY_SYNC_ENABLED=false)');
     }
   });
 }
