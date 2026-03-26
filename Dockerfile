@@ -4,6 +4,7 @@ WORKDIR /app
 
 COPY package*.json ./
 COPY scripts/ ./scripts/
+ARG CACHEBUST=1
 RUN npm install
 
 COPY tsconfig.json ./
