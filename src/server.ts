@@ -83,5 +83,38 @@ export function startServer(port: number = 3001): void {
     console.log(`Monarch Money Ingestor server running on port ${port}`);
     console.log(`  Status:  http://localhost:${port}/api/status`);
     console.log(`  Health:  http://localhost:${port}/health`);
+
+    // Auto-sync setup
+    const syncIntervalMs = parseInt(process.env.SYNC_INTERVAL_MS || '14400000', 10);
+
+    if (syncIntervalMs > 0) {
+      console.log(`  Auto-sync: every ${syncIntervalMs / 1000}s (${(syncIntervalMs / 3600000).toFixed(1)}h)`);
+
+      // Initial sync after 30s delay
+      setTimeout(async () => {
+        console.log('[auto-sync] Running startup sync...');
+        try {
+          const { runSync } = await import('./sync.js');
+          await runSync({ full: false });
+          console.log('[auto-sync] Startup sync complete.');
+        } catch (error) {
+          console.error('[auto-sync] Startup sync failed:', error);
+        }
+      }, 30000);
+
+      // Recurring sync
+      setInterval(async () => {
+        console.log('[auto-sync] Running scheduled sync...');
+        try {
+          const { runSync } = await import('./sync.js');
+          await runSync({ full: false });
+          console.log('[auto-sync] Scheduled sync complete.');
+        } catch (error) {
+          console.error('[auto-sync] Scheduled sync failed:', error);
+        }
+      }, syncIntervalMs);
+    } else {
+      console.log('  Auto-sync: disabled (SYNC_INTERVAL_MS=0)');
+    }
   });
 }
