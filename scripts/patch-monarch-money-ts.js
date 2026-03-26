@@ -35,4 +35,4 @@ if (fs.existsSync(txPath)) {
   fs.writeFileSync(txPath, content);
   console.log('Patched transactions.types.js: made all bare z.string() fields nullable');
 }
-# Force rebuild 20260326014249
+// Force rebuild 20260326014249
